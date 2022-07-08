@@ -186,28 +186,105 @@ Wordpress 및 MySQL 데이터베이스를 배포하기 위한 Ansible Playbook�
 #### (1) wordpress 역할 빼대 생성
 
 ```
+wordpress_directory: /srv/www
+wordpress_version: "6.0"
+wordpress_source_file: "wordpress-{{ wordpress_version }}.tar.gz"
+wordpress_source_url: "https://wordpress.org/{{ wordpress_source_file }}"
 ```
 
 #### (2) 변수 관련 파일 작성
 
 ```
+---
+database_name: wordpress
+database_user: wordpress
+database_password: "P@ssw0rd"
+database_unix_socket: /run/mysqld/mysqld.sock
 
 ```
 
 #### (3) 구성 파일 작성
 
 ```
+# defaults file for roles/wordpress
 
+apache_packages: apache2, php, php-mysql, libapache2-mod-php
 ```
 
 #### (4) 작업 작성
 
 ```
+---
+# tasks file for roles/wordpress
+
+- name: Install Packages for Apache2
+  apt:
+    name: "{{ apache_packages }}"
+    state: latest
+    update_cache: yes
+
+- name: Create Wordpress Directory
+  file:
+    path: "{{ wordpress_directory }}"
+    owner: www-data
+    group: www-data
+    state: directory
+
+- name: Download Wordpress Source
+  get_url:
+    url: "{{ wordpress_source_url }}"
+    dest: /tmp
+
+- name: Unarchive Wordpress Tar
+  unarchive:
+    src: "/tmp/{{ wordpress_source_file }}"
+    remote_src: yes
+    dest: /srv/www
+    owner: www-data
+    group: www-data
+
+- name: Copy Wordpress Configuration for Apache2
+  template:
+    src: wordpress.conf.j2
+    dest: /etc/apache2/sites-available/wordpress.conf
+
+- name: Enable Wordpress Site for Apache2
+  file:
+    src: /etc/apache2/sites-available/wordpress.conf
+    path: /etc/apache2/sites-enabled/wordpress.conf
+    state: link
+  notify:
+  - Restart Apache2 Service
+
+- name: Disable Default Site for Apache2
+  file:
+    path: /etc/apache2/sites-enabled/000-default.conf
+    state: absent
+
+- name: Enable Rewrite Module for Apache2
+  apache2_module:
+    name: rewrite
+    state: present
+  notify:
+  - Restart Apache2 Service
+
+- name: Start/Enable Apache2 Service
+  service:
+    name: apache2
+    enabled: yes
+    state: started
 ```
 
 #### (5) 핸들러 작성
 
 ```
+---
+# handlers file for roles/wordpress
+- name: Restart Apache2 Service
+  service:
+    name: apache2
+    state: restarted
+
 ```
 
 
@@ -251,6 +328,27 @@ Wordpress 및 MySQL 데이터베이스를 배포하기 위한 Ansible Playbook�
 wordpress 및 mysql 역할을 사용하는 플레이북을 작성한다.
 
 ```
+- hosts: default
+  gather_facts: no
+  become: yes
+
+  roles:
+  - wordpress
+  - mysql
+
+  post_tasks:
+  - name: Access Check
+    uri:
+      url: "http://{{ inventory_hostname }}"
+      method: GET
+      status_code: 
+      - 200
+      - 302
+    register: uri_result
+
+  - name: Status Code
+    debug:
+      var: uri_result.status
 
 ```
 
@@ -261,6 +359,7 @@ wordpress 및 mysql 역할을 사용하는 플레이북을 작성한다.
 로컬 VM에서 wordpress 및 mysql이 적절하게 배포되고 작동하는지 검증한다.
 
 ```
+
 ```
 
 
@@ -276,6 +375,10 @@ AWS 프로바이더, 프로바이더 요구사항, Terraform 연격 백엔드를
 > provider.tf
 
 ```
+provider "aws" {
+  profile = "default"
+  region  = "ap-northeast-2"
+}
 ```
 
 #### (2) 변수 정의
@@ -285,6 +388,59 @@ AWS 프로바이더, 프로바이더 요구사항, Terraform 연격 백엔드를
 > vars.tf
 
 ```
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "ap-northeast-2"
+}
+
+variable "instance_type" {
+  description = "EC2 instance type"
+  type        = string
+  default     = "t3.small"
+}
+
+variable "project_name" {
+  description = "Name of the project"
+  type        = string
+  default     = "wordpress"
+}
+
+variable "environment" {
+  description = "Name of the environment"
+  type        = string
+  default     = "dev"
+}
+
+variable "vpc_name" {
+  description = "Name of VPC"
+  type        = string
+  default     = "my-vpc"
+}
+
+variable "vpc_cidr" {
+  description = "CIDR block for VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "vpc_azs" {
+  description = "Availability zones for VPC"
+  type        = list(string)
+  default     = ["ap-northeast-2a"]
+}
+
+variable "vpc_public_subnets" {
+  description = "Public subnets for VPC"
+  type        = list(string)
+  default     = ["10.0.1.0/24"]
+}
+
+variable "vpc_enable_nat_gateway" {
+  description = "Enable NAT gateway for VPC"
+  type        = bool
+  default     = false
+}
 
 ```
 
@@ -305,6 +461,13 @@ AWS 프로바이더, 프로바이더 요구사항, Terraform 연격 백엔드를
 > local.tf
 
 ```
+locals {
+  common_tags = {
+    Name        = "${var.project_name}-${var.environment}"
+    Project     = var.project_name
+    Environment = var.environment
+  }
+}
 
 ```
 
@@ -315,6 +478,15 @@ AWS AMI 이미지 ID를 가져올 수 있는 데이터 소스를 정의한다.
 > data_source.tf
 
 ```
+data "aws_ami" "wordpress" {
+  most_recent = true
+  owners      = ["self"]
+
+  filter {
+    name   = "name"
+    values = ["wordpress"]
+  }
+}
 
 ```
 
@@ -327,6 +499,34 @@ EC2 인스턴스 정의시 Ansible 플레이북을 실행할 수 있는 프로�
 > main.tf
 
 ```
+module "my_vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+
+  name = var.vpc_name
+  cidr = var.vpc_cidr
+
+  azs             = var.vpc_azs
+  public_subnets  = var.vpc_public_subnets
+
+  enable_nat_gateway = var.vpc_enable_nat_gateway
+
+  tags = local.common_tags
+}
+
+resource "aws_instance" "my_instance" {
+  ami           = data.aws_ami.ubuntu_focal.id
+  instance_type = var.instance_type
+  vpc_security_group_ids = [aws_security_group.my_sg_web.id]
+
+  tags = local.common_tags
+}
+
+resource "aws_eip" "my_eip" {
+  vpc      = true
+  instance = aws_instance.my_instance.id
+
+  tags = local.common_tags
+}
 
 ```
 
@@ -337,6 +537,30 @@ EC2 인스턴스 정의시 Ansible 플레이북을 실행할 수 있는 프로�
 > security-group.tf
 
 ```
+resource "aws_security_group" "my_sg_web" {
+  name = "allow-web"
+  vpc_id = module.my_vpc.vpc_id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
 ```
 
 #### (8) 출력 값 설정
@@ -346,6 +570,10 @@ wordpress에 접근할 수 있는 EC2 인스턴스의 외부 IP 및 도메인 �
 > output.tf
 
 ```
+output "elastic_ip" {
+  description = "Elastic IP of Instance"
+  value       = aws_eip.my_eip.public_ip
+}
 ```
 
 
@@ -357,6 +585,50 @@ wordpress에 접근할 수 있는 EC2 인스턴스의 외부 IP 및 도메인 �
 wordpress 배포를 계획하여 문제가 없는지 검증한다.
 
 ```
+packer {
+  required_plugins {
+    amazon = {
+      version = ">= 0.0.2"
+      source  = "github.com/hashicorp/amazon"
+    }
+  }
+}
+
+source "amazon-ebs" "wordpress" {
+  region        = "ap-northeast-2"
+  profile       = "default"
+
+  ami_name      = "wordpress"
+  instance_type = "t2.small"
+  source_ami_filter {
+    filters = {
+      name                = "ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"
+      root-device-type    = "ebs"
+      virtualization-type = "hvm"
+    }
+    most_recent = true
+    owners      = ["099720109477"]
+  }
+  ssh_username = var.ssh_account
+  #force_deregister = true
+}
+
+build {
+  name = "wordpress-build"
+  sources = [
+    "source.amazon-ebs.wordpress"
+  ]
+
+  provisioner "ansible" {
+    playbook_file = "../ansible-wordpress-deploy/site.yaml"
+    extra_arguments = [
+      "--become",
+    ]
+    ansible_env_vars = [
+      "ANSIBLE_HOST_KEY_CHECKING=False",
+    ]
+  }
+}
 ```
 
 #### (2) 배포 적용
