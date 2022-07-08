@@ -218,7 +218,7 @@ mysql_packages: mysql-server, mysql-client, python3-pymysql
 # handlers file for roles/mysql
 ```
 
-`ansible-wordpress-deploy/roles/mysql/meta/main.yaml
+`ansible-wordpress-deploy/roles/mysql/meta/main.yaml`
 ```
 galaxy_info:
   author: your name
@@ -276,7 +276,7 @@ dependencies: []
 ```
 
 
-`ansible-wordpress-deploy/roles/mysql/tasks/main.yaml
+`ansible-wordpress-deploy/roles/mysql/tasks/main.yaml`
 ```
 ---
 # tasks file for roles/mysql
@@ -318,7 +318,7 @@ dependencies: []
 
 
 
-`ansible-wordpress-deploy/roles/mysql/templates/main.yaml
+`ansible-wordpress-deploy/roles/mysql/templates/main.yaml`
 ```
 <?php
 /**
@@ -420,7 +420,7 @@ require_once ABSPATH . 'wp-settings.php';
 ```
 
 
-`ansible-wordpress-deploy/roles/mysql/.travis.yml
+`ansible-wordpress-deploy/roles/mysql/.travis.yml`
 ```
 ---
 language: python
